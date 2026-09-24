@@ -1,12 +1,12 @@
 """
 ETAPA 1 - Extrair metadados completos (Dublin Core do Sophia + resumo do PDF)
 ================================================================================
-
+ 
 O QUE FAZ
 ---------
 Para cada item ja baixado (usa o CSV gerado no script anterior,
 acervo_digital_ifce.csv), este script:
-
+ 
 1. Busca os metadados no endpoint "Dublin Core" do proprio Sophia
    (ajxDublinCore.asp?cod=<codigo>) - esse endpoint retorna, de forma
    estruturada e confiavel: titulo, autor(es), ORIENTADOR (contributor),
@@ -16,13 +16,13 @@ acervo_digital_ifce.csv), este script:
    tentar achar o RESUMO (esse campo nao vem no Dublin Core do Sophia).
 3. Salva tudo em metadados_completos.csv, ja incluindo uma coluna
    "campus" extraida da descricao.
-
+ 
 O QUE MUDOU NESSA VERSAO (v2)
 ------------------------------
 Na primeira versao, TODOS os campos do Dublin Core vinham vazios pra
 praticamente todo mundo. Os motivos mais provaveis (e as correcoes
 feitas aqui):
-
+ 
 1. O parser so sabia ler dois formatos (tabela com rotulo em ingles,
    ou texto solto). O Sophia provavelmente devolve os rotulos em
    PORTUGUES ("Titulo", "Autor(es)", "Orientador"...) e/ou usa <meta>
@@ -66,20 +66,20 @@ feitas aqui):
    em acentos - ver secao DEPENDENCIAS). O CSV de saida agora tem uma
    coluna extra "resumo_via_ocr" (sim/vazio) pra você saber quais
    resumos vieram de OCR e merecem uma revisao manual mais cuidadosa.
-
+ 
 SOBRE A SESSAO
 -------------------
 O endpoint ajxDublinCore.asp parece depender de cookies de sessao (como
 um navegador normal teria). Por isso o script usa requests.Session(),
 visita a home no inicio, e agora TAMBEM visita a pagina de detalhe de
 cada item antes de pedir o Dublin Core dele.
-
+ 
 Ainda assim, eu nao consegui testar esse endpoint contra o servidor de
 verdade (sem acesso a rede aqui de onde eu escrevi isso). RODE COM UM
 INTERVALO PEQUENO PRIMEIRO (uns 5-10 codigos) e me manda o que aparecer
 no CSV e, se algum campo continuar vazio, os arquivos que aparecerem em
 debug_dublin_core/ - com isso da pra fechar o parser rapidinho.
-
+ 
 PASSO MANUAL IMPORTANTE
 ---------------------------
 Depois que esse script rodar, ABRA o metadados_completos.csv no Excel
@@ -90,17 +90,17 @@ capturar lixo), corrija manualmente. Isso e normal - nem toda fonte e
 "resumo_via_ocr" = "sim": esse resumo veio de OCR (o PDF nao tinha
 camada de texto), entao e mais provavel ter erros de acentuacao ou
 palavras trocadas do que os resumos extraidos direto do PDF.
-
+ 
 So depois de revisado esse CSV e que voce deve rodar o proximo script
 (2_gerar_saf.py), que usa esse CSV corrigido para montar o pacote do
 DSpace.
-
+ 
 DEPENDENCIAS
 ------------
 pip install requests beautifulsoup4 pdfplumber
 pip install pymupdf                    # opcional, so ajuda na extracao do resumo
 pip install pdf2image pytesseract      # opcional, so pro fallback de OCR
-
+ 
 O fallback de OCR tambem precisa de dois programas instalados no
 SISTEMA (nao e so pip install):
   - poppler (fornece o "pdftoppm", usado pra renderizar paginas do PDF
@@ -110,13 +110,13 @@ SISTEMA (nao e so pip install):
     (o pacote "tesseract-ocr-por" e o dicionario/modelo de PORTUGUES -
     sem ele o script ainda funciona, mas cai pro modelo de ingles e
     erra bem mais em acentos: "matematica" vira "matemética" etc.)
-
+ 
 Se pdf2image/pytesseract ou os programas do sistema nao estiverem
 instalados, o script simplesmente pula o OCR (avisa no terminal) e
 segue funcionando normalmente pros PDFs que TEM camada de texto - o
 OCR so entra em acao como ultimo recurso.
 """
-
+ 
 import csv
 import os
 import re
@@ -125,15 +125,15 @@ import unicodedata
 import requests
 from bs4 import BeautifulSoup
 import pdfplumber
-
+ 
 # ============ CONFIGURACAO ============
 CSV_ENTRADA = "acervo_digital_ifce.csv"       # gerado pelo script anterior
 CSV_SAIDA = "metadados_completos.csv"
 SLEEP_SEGUNDOS = 1.0
-
+ 
 BASE_URL = "https://biblioteca.ifce.edu.br"
 URL_HOME = f"{BASE_URL}/index.asp"             # so pra pegar cookie de sessao
-
+ 
 # O coletor (script anterior) usa "/mobile" pra pagina de detalhe, e foi
 # confirmado que funciona. O endpoint de Dublin Core pode estar tanto
 # dentro de "/mobile" quanto na raiz - por isso tentamos os dois, nessa
@@ -142,19 +142,19 @@ CANDIDATOS_URL_DUBLIN_CORE = [
     f"{BASE_URL}/mobile/asp/ajxDublinCore.asp",
     f"{BASE_URL}/asp/ajxDublinCore.asp",
 ]
-
+ 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; ColetorAcervoDigital/1.0)"}
-
+ 
 PASTA_DEBUG = "debug_dublin_core"
 MAX_DEBUG_SALVOS = 5
-
+ 
 PASTA_DEBUG_RESUMO = "debug_resumo"
 MAX_DEBUG_RESUMO_SALVOS = 8
-
+ 
 LIMIAR_RAZAO_ESPACOS = 0.08  # abaixo disso, o texto provavelmente "grudou" as palavras
 # ========================================
-
-
+ 
+ 
 # Dicionario de sinonimos: normaliza o rotulo (sem acento, minusculo,
 # sem ":") e mapeia pro nome de campo Dublin Core padrao. Cobre tanto
 # os nomes "oficiais" em ingles quanto variantes em portugues que o
@@ -187,8 +187,8 @@ MAPA_LABELS = {
     "cobertura": "coverage",
     "direitos": "rights",
 }
-
-
+ 
+ 
 def _normalizar_label(texto):
     """Deixa o rotulo em forma canonica pra comparar com o MAPA_LABELS:
     sem acento, minusculo, sem ':' nem espacos nas pontas."""
@@ -196,8 +196,8 @@ def _normalizar_label(texto):
     texto = unicodedata.normalize("NFKD", texto)
     texto = "".join(c for c in texto if not unicodedata.combining(c))
     return texto.lower()
-
-
+ 
+ 
 def iniciar_sessao():
     """Cria uma sessao e visita a home pra pegar cookies, como um navegador faria."""
     session = requests.Session()
@@ -206,16 +206,16 @@ def iniciar_sessao():
     except requests.RequestException as e:
         print(f"[aviso] nao consegui abrir a home pra pegar sessao: {e}")
     return session
-
-
+ 
+ 
 def _url_detalhe(codigo):
     return (f"{BASE_URL}/mobile/detalhe.asp?idioma=ptbr&acesso=web"
             f"&codigo={codigo}&tipo=1&detalhe=0&busca=3")
-
-
+ 
+ 
 _debug_salvos = 0
-
-
+ 
+ 
 def _salvar_html_debug(codigo, url, conteudo):
     global _debug_salvos
     if _debug_salvos >= MAX_DEBUG_SALVOS:
@@ -229,22 +229,22 @@ def _salvar_html_debug(codigo, url, conteudo):
     except OSError as e:
         print(f"  [aviso] nao consegui salvar debug HTML: {e}")
     _debug_salvos += 1
-
-
+ 
+ 
 _url_dc_que_funcionou = None  # cache: depois que uma URL funcionar, tenta ela primeiro
-
-
+ 
+ 
 def buscar_dublin_core(codigo, session):
     """Visita a pagina de detalhe do item (pra dar contexto de sessao)
     e so entao busca e interpreta os metadados Dublin Core."""
     global _url_dc_que_funcionou
-
+ 
     url_detalhe = _url_detalhe(codigo)
     try:
         session.get(url_detalhe, headers=HEADERS, timeout=20)
     except requests.RequestException as e:
         print(f"  [aviso] nao consegui abrir a pagina de detalhe antes do Dublin Core: {e}")
-
+ 
     params = {
         "cod": codigo,
         "tipo": 1,
@@ -256,47 +256,47 @@ def buscar_dublin_core(codigo, session):
         "campo1": "palavra_chave",
         "valor1": "",
     }
-
+ 
     candidatos = list(CANDIDATOS_URL_DUBLIN_CORE)
     if _url_dc_que_funcionou and _url_dc_que_funcionou in candidatos:
         candidatos.remove(_url_dc_que_funcionou)
         candidatos.insert(0, _url_dc_que_funcionou)
-
+ 
     headers_req = dict(HEADERS)
     headers_req["Referer"] = url_detalhe
-
+ 
     for url in candidatos:
         try:
             resp = session.get(url, params=params, headers=headers_req, timeout=20)
         except requests.RequestException as e:
             print(f"  [aviso] erro ao chamar {url}: {e}")
             continue
-
+ 
         if resp.status_code != 200:
             continue
-
+ 
         campos = parse_dublin_core(resp.content)
         if campos:
             _url_dc_que_funcionou = url
             return campos
-
+ 
         _salvar_html_debug(codigo, url, resp.content)
-
+ 
     return {}
-
-
+ 
+ 
 def _parse_ajx_str_final_dublin_core(html_bytes):
     """Formato REAL do endpoint ajxDublinCore.asp (confirmado a partir de
     respostas salvas de verdade): a pagina e um <script> que, dentro de
     window.onload, monta a tabela de metadados como uma STRING JavaScript
     (var str_final = "<table>...</table>";) e injeta isso via innerHTML no
     elemento #dDublinCore da pagina pai (um iframe/frame escondido).
-
+ 
     Isso explica por que os outros parsers (meta / tabela / dl / texto
     solto) nao achavam nada: o BeautifulSoup, ao abrir a resposta direto,
     nao encontra nenhuma <tr>/<td> "de verdade" no HTML - elas existem
     apenas como texto dentro da string JS, nunca chegam a virar DOM.
-
+ 
     A solucao: achar essa string com regex, desfazer o escaping de string
     JS (aspas e barras escapadas) e SO ENTAO parsear o resultado como HTML
     de verdade, extraindo os pares rotulo/valor das <tr><td> internas -
@@ -305,11 +305,11 @@ def _parse_ajx_str_final_dublin_core(html_bytes):
     language, relation, publisher), batendo direto com o MAPA_LABELS.
     """
     texto = html_bytes.decode("utf-8", errors="replace")
-
+ 
     m = re.search(r'var\s+str_final\s*=\s*"(.*?)"\s*;', texto, re.DOTALL)
     if not m:
         return {}
-
+ 
     html_str = m.group(1)
     # desfaz o escaping de string JS (a pagina usa aspas simples pros
     # atributos HTML, entao normalmente nao ha nada pra desfazer aqui,
@@ -321,7 +321,7 @@ def _parse_ajx_str_final_dublin_core(html_bytes):
         .replace("\\n", " ")
         .replace("\\\\", "\\")
     )
-
+ 
     sub_soup = BeautifulSoup(html_str, "html.parser")
     campos = {}
     for tr in sub_soup.find_all("tr"):
@@ -333,8 +333,8 @@ def _parse_ajx_str_final_dublin_core(html_bytes):
             if campo and valor:
                 campos.setdefault(campo, []).append(valor)
     return campos
-
-
+ 
+ 
 def _parse_meta_dublin_core(soup):
     """Formato 1: <meta name="DC.title" content="..."> (ou DCTERMS.*, dc:*)."""
     campos = {}
@@ -349,8 +349,8 @@ def _parse_meta_dublin_core(soup):
         if campo:
             campos.setdefault(campo, []).append(conteudo.strip())
     return campos
-
-
+ 
+ 
 def _parse_tabela_dublin_core(soup):
     """Formato 2: tabela HTML, rotulo numa celula e valor na outra."""
     campos = {}
@@ -363,8 +363,8 @@ def _parse_tabela_dublin_core(soup):
             if campo and valor:
                 campos.setdefault(campo, []).append(valor)
     return campos
-
-
+ 
+ 
 def _parse_dl_dublin_core(soup):
     """Formato 3: lista de definicao <dl><dt>rotulo</dt><dd>valor</dd></dl>,
     comum em paginas que exibem metadados Dublin Core."""
@@ -379,8 +379,8 @@ def _parse_dl_dublin_core(soup):
             if campo and valor:
                 campos.setdefault(campo, []).append(valor)
     return campos
-
-
+ 
+ 
 def _parse_texto_simples_dublin_core(soup):
     """Formato 4 (fallback): texto solto, rotulo numa linha e valor na(s)
     linha(s) seguinte(s) - como costuma aparecer numa aba "Dublin Core"
@@ -400,14 +400,14 @@ def _parse_texto_simples_dublin_core(soup):
         elif campo_atual:
             campos[campo_atual].append(linha)
     return campos
-
-
+ 
+ 
 def parse_dublin_core(html):
     """Tenta interpretar a resposta do endpoint nos formatos mais comuns,
     nessa ordem de prioridade, e fica com o primeiro que reconhecer algo.
     Retorna um dicionario {campo: [valores]} (listas, porque subject,
     format e relation costumam se repetir).
-
+ 
     O formato REAL do Sophia (confirmado em respostas salvas de verdade) e
     o "str_final" - uma tabela embutida numa string JS dentro de um
     <script>, entao ele vai primeiro, antes dos parsers que dependem de
@@ -416,7 +416,7 @@ def parse_dublin_core(html):
     campos = _parse_ajx_str_final_dublin_core(html)
     if campos:
         return campos
-
+ 
     soup = BeautifulSoup(html, "html.parser")
     for parser_fn in (
         _parse_meta_dublin_core,
@@ -428,21 +428,21 @@ def parse_dublin_core(html):
         if campos:
             return campos
     return {}
-
-
+ 
+ 
 CONECTORES_NOME_PROPRIO = {"de", "do", "da", "dos", "das", "e"}
-
-
+ 
+ 
 def extrair_campus_da_descricao(descricoes):
     """Extrai o nome do campus a partir do campo 'description' do Dublin Core.
     Ex: 'TCC (Bacharelado ...) - IFCE/ Campus Fortaleza, Fortaleza-CE, 2019'
     Ex: '... (IFCE) - Campus Limoeiro do Norte como requisito parcial ...'
-
+ 
     A versao anterior cortava so em virgula/ponto/ponto-e-virgula depois
     de "Campus", entao quando a frase continuava sem pontuacao logo em
     seguida (ex: '...Campus Limoeiro do Norte COMO requisito parcial...')
     ela capturava um pedaco enorme de lixo junto do nome do campus.
-
+ 
     Agora a gente le palavra por palavra depois de "Campus" e so continua
     enquanto a palavra comecar com maiuscula (parte do nome proprio) ou
     for um conector comum em nomes de lugar (de/do/da/dos/das/e) - parando
@@ -453,7 +453,7 @@ def extrair_campus_da_descricao(descricoes):
     m = re.search(r"Campus\s+(.+)", texto)
     if not m:
         return ""
-
+ 
     palavras_campus = []
     for palavra in m.group(1).split():
         limpa = palavra.strip(",.;:()")
@@ -466,22 +466,22 @@ def extrair_campus_da_descricao(descricoes):
         palavras_campus.append(limpa)
         if palavra[-1:] in ",.;:":
             break
-
+ 
     # nao deixa terminar com um conector "pendurado" (ex: "Norte do")
     while palavras_campus and palavras_campus[-1].lower() in CONECTORES_NOME_PROPRIO:
         palavras_campus.pop()
-
+ 
     return " ".join(palavras_campus)
-
-
+ 
+ 
 def extrair_ano_da_descricao(descricoes):
     """Fallback pro ano quando o campo 'date' do Dublin Core vem vazio -
     a descricao costuma terminar com o ano (ex: '..., Fortaleza-CE, 2019')."""
     texto = " ".join(descricoes)
     padrao = re.search(r"\b(19|20)\d{2}\b", texto)
     return padrao.group(0) if padrao else ""
-
-
+ 
+ 
 def _razao_espacos(texto):
     """Proporcao de espacos em relacao ao total de caracteres - serve como
     indicador de que a extracao 'colou' as palavras (proporcao muito
@@ -489,8 +489,8 @@ def _razao_espacos(texto):
     if not texto:
         return 0.0
     return texto.count(" ") / max(len(texto), 1)
-
-
+ 
+ 
 def _extrair_texto_pdfplumber(caminho_pdf, paginas, x_tolerance=3):
     texto = ""
     try:
@@ -500,8 +500,8 @@ def _extrair_texto_pdfplumber(caminho_pdf, paginas, x_tolerance=3):
     except Exception as e:
         print(f"  [aviso] pdfplumber falhou em {caminho_pdf}: {e}")
     return texto
-
-
+ 
+ 
 def _extrair_texto_fitz(caminho_pdf, paginas):
     """Extracao alternativa com PyMuPDF - so entra em acao se o
     pdfplumber devolver texto com poucos espacos (sintoma de
@@ -520,25 +520,25 @@ def _extrair_texto_fitz(caminho_pdf, paginas):
     except Exception as e:
         print(f"  [aviso] PyMuPDF falhou em {caminho_pdf}: {e}")
     return texto
-
-
+ 
+ 
 LIMIAR_CHARS_OCR = 30  # texto (apos pdfplumber/fitz) mais curto que isso = PDF
                        # provavelmente sem camada de texto -> tenta OCR
-
+ 
 # Lembra qual idioma de OCR funcionou da ultima vez, pra nao ficar
 # tentando 'por' de novo em todo PDF depois de descobrir que o pacote
 # de idioma portugues nao esta instalado no tesseract deste sistema.
 _idioma_ocr = "por"
 _aviso_ocr_indisponivel_mostrado = False
-
-
+ 
+ 
 def _extrair_texto_ocr(caminho_pdf, paginas, dpi=300):
     """Ultimo recurso, usado quando pdfplumber e fitz nao acham NENHUM
     texto no PDF. Isso acontece com PDFs que nao tem camada de texto
     de verdade - o texto foi "achatado" em curvas/desenho vetorial na
     exportacao (comum quando o gerador do PDF converte as fontes em
     outline, por exemplo pra nao depender de fontes licenciadas).
-
+ 
     Renderiza cada pagina como imagem (via pdf2image/poppler) e roda
     OCR nela com o Tesseract (via pytesseract). Tenta em portugues
     primeiro; se o pacote de idioma 'por' nao estiver instalado no
@@ -546,7 +546,7 @@ def _extrair_texto_ocr(caminho_pdf, paginas, dpi=300):
     mas erra mais em palavras acentuadas - ver DEPENDENCIAS no topo do
     arquivo pra instalar o pacote certo)."""
     global _idioma_ocr, _aviso_ocr_indisponivel_mostrado
-
+ 
     try:
         from pdf2image import convert_from_path
         import pytesseract
@@ -557,7 +557,7 @@ def _extrair_texto_ocr(caminho_pdf, paginas, dpi=300):
                   "OCR; PDFs sem camada de texto vao ficar com resumo vazio.")
             _aviso_ocr_indisponivel_mostrado = True
         return ""
-
+ 
     try:
         imagens = convert_from_path(caminho_pdf, dpi=dpi, first_page=1, last_page=paginas)
     except Exception as e:
@@ -567,7 +567,7 @@ def _extrair_texto_ocr(caminho_pdf, paginas, dpi=300):
                   f"poppler-utils): {e}")
             _aviso_ocr_indisponivel_mostrado = True
         return ""
-
+ 
     texto = ""
     for i, imagem in enumerate(imagens):
         trecho = ""
@@ -587,49 +587,49 @@ def _extrair_texto_ocr(caminho_pdf, paginas, dpi=300):
             else:
                 print(f"  [aviso] OCR falhou na pagina {i + 1}: {e}")
         texto += trecho + "\n"
-
+ 
     return texto
-
-
+ 
+ 
 def extrair_texto_pdf(caminho_pdf, paginas=3):
     """Le o texto das primeiras paginas do PDF (so usado pra achar o
     resumo). Se o resultado tiver poucos espacos (palavras grudadas),
     tenta alternativas ate achar uma extracao melhor. Se, mesmo assim,
     nao achar nenhum texto de verdade (PDF sem camada de texto), tenta
     OCR como ultimo recurso.
-
+ 
     Devolve uma tupla (texto, via_ocr) - via_ocr indica se o texto
     devolvido veio do OCR (util pra sinalizar no CSV que aquele resumo
     merece uma revisao manual mais cuidadosa, ja que OCR erra mais que
     texto extraido direto do PDF)."""
     texto = _extrair_texto_pdfplumber(caminho_pdf, paginas)
-
+ 
     if _razao_espacos(texto) < LIMIAR_RAZAO_ESPACOS:
         texto_alt = _extrair_texto_pdfplumber(caminho_pdf, paginas, x_tolerance=1)
         if _razao_espacos(texto_alt) > _razao_espacos(texto):
             texto = texto_alt
-
+ 
     if _razao_espacos(texto) < LIMIAR_RAZAO_ESPACOS:
         texto_fitz = _extrair_texto_fitz(caminho_pdf, paginas)
         if _razao_espacos(texto_fitz) > _razao_espacos(texto):
             texto = texto_fitz
-
+ 
     if len(texto.strip()) >= LIMIAR_CHARS_OCR:
         return texto, False
-
+ 
     # Nada funcionou ate aqui - PDF provavelmente sem camada de texto.
     print(f"  [info] {os.path.basename(caminho_pdf)}: sem texto extraivel nas "
           f"primeiras {paginas} paginas (PDF sem camada de texto) - tentando OCR...")
     texto_ocr = _extrair_texto_ocr(caminho_pdf, paginas)
     if len(texto_ocr.strip()) > len(texto.strip()):
         return texto_ocr, bool(texto_ocr.strip())
-
+ 
     return texto, False
-
-
+ 
+ 
 _debug_resumo_salvos = 0
-
-
+ 
+ 
 def _salvar_debug_resumo(codigo, texto):
     """Quando nao acha resumo, salva o texto cru extraido do PDF pra
     facilitar o ajuste do parser depois (mesma ideia do debug do
@@ -646,32 +646,32 @@ def _salvar_debug_resumo(codigo, texto):
     except OSError as e:
         print(f"  [aviso] nao consegui salvar debug de resumo: {e}")
     _debug_resumo_salvos += 1
-
-
+ 
+ 
 def obter_resumo_do_pdf(caminho_pdf, codigo):
-    """Tenta achar o resumo nas 3 primeiras paginas; se nao achar,
-    tenta de novo lendo mais paginas (algumas monografias tem folha de
-    rosto, ficha catalografica, dedicatoria, agradecimentos e sumario
-    antes do resumo, empurrando ele pra alem da pagina 3 - e, pra PDFs
-    sem camada de texto, mais paginas tambem significa mais paginas
-    pra OCR tentar). Se mesmo assim nao achar, guarda o texto extraido
+    """Tenta achar o resumo nas primeiras paginas, alargando a busca em
+    etapas (3 -> 8 -> 20 paginas) se nao achar de primeira. Dissertacoes
+    e teses costumam ter capa, folha de rosto, ficha catalografica,
+    folha de aprovacao, dedicatoria, agradecimentos, epigrafe e as vezes
+    ate uma lista de ilustracoes antes do resumo - isso pode empurrar o
+    resumo bem alem da pagina 8 (ja vi resumo so na pagina 9-12). Pra
+    PDFs sem camada de texto, mais paginas tambem significa mais paginas
+    pra OCR tentar. Se mesmo assim nao achar, guarda o texto extraido
     em debug_resumo/ pra dar pra ajustar o parser.
-
+ 
     Devolve (resumo, via_ocr)."""
-    texto, via_ocr = extrair_texto_pdf(caminho_pdf, paginas=3)
-    resumo = extrair_resumo(texto)
-    if resumo:
-        return resumo, via_ocr
-
-    texto_mais, via_ocr_mais = extrair_texto_pdf(caminho_pdf, paginas=8)
-    resumo = extrair_resumo(texto_mais)
-    if resumo:
-        return resumo, via_ocr_mais
-
-    _salvar_debug_resumo(codigo, texto_mais or texto)
+    ultimo_texto, ultimo_via_ocr = "", False
+    for paginas in (3, 8, 20):
+        texto, via_ocr = extrair_texto_pdf(caminho_pdf, paginas=paginas)
+        resumo = extrair_resumo(texto)
+        if resumo:
+            return resumo, via_ocr
+        ultimo_texto, ultimo_via_ocr = texto, via_ocr
+ 
+    _salvar_debug_resumo(codigo, ultimo_texto)
     return "", False
-
-
+ 
+ 
 # Cabecalhos que sinalizam o FIM do resumo (o proximo elemento textual
 # da monografia). Cada um e testado como token "solto" (ver
 # _stop_pattern_resumo), entao nao precisam bater com a linha inteira.
@@ -691,21 +691,21 @@ CABECALHOS_FIM_RESUMO = [
     r"1\s*[\.\)]?\s*INTRODU[CÇ][AÃ]O",
     r"INTRODU[CÇ][AÃ]O",
 ]
-
+ 
 # Variacoes do proprio rotulo "resumo" que podem aparecer no PDF.
 # Inclui a grafia "RESUMO" com espacos entre letras, comum quando o
 # layout usa letter-spacing (a extracao de texto insere espaco entre
 # cada letra: "R E S U M O").
 PADRAO_ROTULO_RESUMO = r"R\s*E\s*S\s*U\s*M\s*O(?!\s*:?\s*EXPANDIDO)"
-
-
+ 
+ 
 def _juntar_hifenizacao(texto):
     """Palavras quebradas no fim da linha por hifenizacao (comum em PDF
     justificado) atrapalham a leitura e podem confundir o filtro de fim
     de secao. Junta "pales-\ntra" -> "palestra"."""
     return re.sub(r"(\w)-\s*\n\s*(\w)", r"\1\2", texto)
-
-
+ 
+ 
 def _candidatos_resumo(texto):
     """Acha TODAS as ocorrencias do rotulo 'resumo' no texto e devolve,
     pra cada uma, o trecho que vem depois (ate o proximo cabecalho
@@ -715,32 +715,32 @@ def _candidatos_resumo(texto):
     depois, no chamador, a que parecer mais um resumo de verdade."""
     candidatos = []
     fim_regex = "|".join(CABECALHOS_FIM_RESUMO)
-
+ 
     for m in re.finditer(PADRAO_ROTULO_RESUMO, texto, re.IGNORECASE):
         inicio = m.end()
         # pula pontuacao/2-pontos/travessao logo apos o rotulo, e
         # tambem uma eventual palavra "expandido"/numero de pagina
         trecho_restante = texto[inicio:inicio + 4000]
-
+ 
         # se, colado ao rotulo, vier so um numero (tipico de "RESUMO ... 7"
         # de sumario/indice), pula esse candidato - nao e o resumo de verdade
         colado = trecho_restante[:6].strip()
         if re.match(r"^[.\s]*\d{1,3}\s*$", colado) or re.match(r"^\d{1,3}\b", colado):
             continue
-
+ 
         # acha onde comeca o proximo cabecalho dentro do trecho
         m_fim = re.search(r"\b(?:" + fim_regex + r")\b", trecho_restante, re.IGNORECASE)
         bruto = trecho_restante[:m_fim.start()] if m_fim else trecho_restante
-
+ 
         bruto = bruto.strip(" \n:.-\t")
         candidatos.append(bruto)
-
+ 
     return candidatos
-
-
+ 
+ 
 def extrair_resumo(texto):
     """Tenta achar o texto do resumo no texto extraido do PDF.
-
+ 
     A versao anterior so reconhecia o formato "RESUMO\\n<texto>", ou
     seja, exigia uma quebra de linha logo apos a palavra RESUMO. Isso
     falha em varios casos comuns:
@@ -756,7 +756,7 @@ def extrair_resumo(texto):
       - O corte de fim de secao ("\\n[A-Z]{4,}\\n") cortava resumos que
         continham qualquer palavra em caixa alta isolada (siglas, por
         exemplo YOLO, UFC, IFCE) em uma linha propria.
-
+ 
     Agora a funcao: (a) junta palavras hifenizadas quebradas em linha,
     (b) acha TODAS as ocorrencias de "resumo" no texto, nao so a
     primeira, (c) descarta ocorrencias que sao claramente entradas de
@@ -768,50 +768,50 @@ def extrair_resumo(texto):
     """
     if not texto:
         return ""
-
+ 
     texto = _juntar_hifenizacao(texto)
-
+ 
     candidatos = _candidatos_resumo(texto)
     if not candidatos:
         return ""
-
+ 
     melhor = max(candidatos, key=len)
     melhor = re.sub(r"\s+", " ", melhor).strip()
-
+ 
     # candidato "resumo" com menos de ~80 caracteres quase sempre e
     # ruido (rotulo pego sem o corpo do texto do lado) - nesse caso e
     # melhor devolver vazio (e deixar pra revisao manual) do que
     # devolver lixo curto que parece preenchido mas nao serve.
     if len(melhor) < 80:
         return ""
-
+ 
     return melhor[:2500]  # limite de seguranca
-
-
+ 
+ 
 def main():
     if not os.path.exists(CSV_ENTRADA):
         print(f"Nao encontrei {CSV_ENTRADA}. Rode primeiro o script de coleta.")
         return
-
+ 
     session = iniciar_sessao()
-
+ 
     with open(CSV_ENTRADA, newline="", encoding="utf-8") as f_in:
         linhas = [row for row in csv.DictReader(f_in) if row.get("arquivo_local")]
-
+ 
     print(f"{len(linhas)} itens com PDF encontrados para processar.")
-
+ 
     with open(CSV_SAIDA, "w", newline="", encoding="utf-8") as f_out:
         writer = csv.writer(f_out)
         writer.writerow([
             "codigo", "titulo", "autor", "orientador", "campus", "tipo", "ano",
             "assuntos", "resumo", "resumo_via_ocr", "arquivo_local"
         ])
-
+ 
         for row in linhas:
             codigo = row["codigo"]
             arquivo_local = row["arquivo_local"]
             print(f"[{codigo}] processando...")
-
+ 
             try:
                 dc = buscar_dublin_core(codigo, session)
             except requests.RequestException as e:
@@ -820,22 +820,22 @@ def main():
             except Exception as e:
                 print(f"  erro inesperado ao buscar Dublin Core: {e}")
                 dc = {}
-
+ 
             if not dc:
                 print(f"  [aviso] nenhum metadado Dublin Core reconhecido pro codigo {codigo}.")
-
+ 
             # titulo/tipo: se o Dublin Core nao trouxer nada, reaproveita o
             # que o script de coleta ja tinha extraido da pagina do item.
             titulo = (dc.get("title", [""])[0] if dc.get("title") else "") or row.get("titulo", "")
             tipo = (dc.get("type", [""])[0] if dc.get("type") else "") or row.get("tipo", "")
-
+ 
             autor = "; ".join(dc.get("creator", []))
             orientador = "; ".join(dc.get("contributor", []))
             assuntos = "; ".join(dc.get("subject", []))
             campus = extrair_campus_da_descricao(dc.get("description", []))
             ano = (dc.get("date", [""])[0] if dc.get("date") else "") or \
                 extrair_ano_da_descricao(dc.get("description", []))
-
+ 
             resumo = ""
             via_ocr = False
             try:
@@ -843,14 +843,14 @@ def main():
                     resumo, via_ocr = obter_resumo_do_pdf(arquivo_local, codigo)
             except Exception as e:
                 print(f"  [aviso] falha ao processar o PDF {arquivo_local}: {e}")
-
+ 
             writer.writerow([
                 codigo, titulo, autor, orientador, campus, tipo, ano,
                 assuntos, resumo, ("sim" if via_ocr else ""), arquivo_local,
             ])
             f_out.flush()
             time.sleep(SLEEP_SEGUNDOS)
-
+ 
     print(f"\nConcluido! Revise o arquivo: {CSV_SAIDA}")
     print("Abra no Excel/LibreOffice e corrija onde a extracao automatica falhar.")
     if _debug_salvos:
@@ -861,7 +861,7 @@ def main():
         print(f"Obs: {_debug_resumo_salvos} item(ns) sem resumo reconhecivel tiveram "
               f"o texto extraido do PDF salvo em {PASTA_DEBUG_RESUMO}/ - me manda "
               f"esses arquivos se ainda sobrar resumo vazio que nao devia.")
-
-
+ 
+ 
 if __name__ == "__main__":
     main()
