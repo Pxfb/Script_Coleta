@@ -1,40 +1,45 @@
 """
 Coletor de itens digitais (PDF) da Biblioteca Sophia - IFCE
 =============================================================
+VERSAO "LISTA A PARTIR DO XML"
 
 O QUE ESSE SCRIPT FAZ
 ----------------------
-1. Percorre os "códigos" das obras (detalhe.asp?codigo=N) em sequência.
-2. Para cada código, verifica se o item tem conteúdo digital (PDF).
-3. Verifica se o tipo do material está em TIPOS_DESEJADOS (por padrão,
-   só "TCC") - se não estiver, pula sem baixar.
-4. Se for do tipo certo, extrai título, tipo e o link de download do
+1. Le o arquivo XML exportado do Sophia (MARC XML) e extrai os codigos
+   do campo de controle 001 de cada <record> - esses sao os mesmos
+   codigos usados na URL detalhe.asp?codigo=N do site.
+2. Para cada codigo da lista (e so eles - nao percorre um intervalo
+   sequencial mais), verifica se o item tem conteudo digital (PDF).
+3. Verifica se o tipo do material esta em TIPOS_DESEJADOS (por padrao,
+   "Tese" e "Dissertação", ja que e esse o acervo do XML) - se nao
+   estiver, pula sem baixar.
+4. Se for do tipo certo, extrai titulo, tipo e o link de download do
    PDF, e baixa o PDF para a pasta ./pdfs/
 5. Salva tudo (metadados + nome do arquivo salvo) em um CSV.
-6. É RETOMÁVEL: se você parar e rodar de novo, ele pula os códigos já
-   processados (lê o CSV existente).
+6. E RETOMAVEL: se voce parar e rodar de novo, ele pula os codigos ja
+   processados (le o CSV existente).
 
 COMO USAR
 ---------
-1. Instale as dependências:
+1. Instale as dependencias:
    pip install requests beautifulsoup4
 
-2. Ajuste as variáveis CODIGO_INICIAL e CODIGO_FINAL lá embaixo.
-   - Dica: comece com um intervalo pequeno (ex: 143800 a 143850) só
-     pra testar se está funcionando, depois expanda.
-   - O maior código visto até agora foi por volta de 143835 (setembro/2026).
-     Itens mais antigos têm código menor. Se quiser TODO o acervo digital,
-     pode rodar de 1 até o código mais recente.
+2. Ajuste XML_ENTRADA la embaixo pro caminho do seu arquivo MARC XML
+   (por padrao ja aponta pro "Arquivo_Marc_Teses_Dissertações.xml").
 
-3. Rode: python coletar_sophia_ifce.py
+3. Rode: python coletar_sophia_ifce_lista.py
 
-IMPORTANTE - USO RESPONSÁVEL
+   Se quiser testar rapido com poucos codigos antes de rodar tudo,
+   defina LIMITE_TESTE la embaixo (ex: 5) - ele processa so os N
+   primeiros codigos da lista extraida do XML.
+
+IMPORTANTE - USO RESPONSAVEL
 -----------------------------
-- O script já tem uma pausa (SLEEP_SEGUNDOS) entre requisições para não
-  sobrecarregar o servidor da biblioteca. Não recomendo remover isso.
-- Como são só PDFs de acesso público (que qualquer pessoa consegue abrir
-  pelo site, sem login), isso é equivalente a um usuário navegando e
-  baixando manualmente — só que automatizado. Ainda assim, respeite os
+- O script ja tem uma pausa (SLEEP_SEGUNDOS) entre requisicoes para nao
+  sobrecarregar o servidor da biblioteca. Nao recomendo remover isso.
+- Como sao so PDFs de acesso publico (que qualquer pessoa consegue abrir
+  pelo site, sem login), isso e equivalente a um usuario navegando e
+  baixando manualmente — so que automatizado. Ainda assim, respeite os
   termos de uso da biblioteca e evite rodar isso de forma agressiva.
 """
 
@@ -42,27 +47,42 @@ import csv
 import os
 import re
 import time
+import xml.etree.ElementTree as ET
 import requests
 from bs4 import BeautifulSoup
 
 # ============ CONFIGURAÇÃO ============
-CODIGO_INICIAL = 143800
-CODIGO_FINAL = 143850          # ajuste para o intervalo que você quer
-SLEEP_SEGUNDOS = 1.0            # pausa entre requisições (educado com o servidor)
+XML_ENTRADA = "Arquivo Marc Teses Dissertações.xml"  # arquivo MARC XML com os registros
+LIMITE_TESTE = None           # ex: 5 pra testar so os 5 primeiros codigos; None = todos
+SLEEP_SEGUNDOS = 1.0             # pausa entre requisições (educado com o servidor)
 PASTA_PDFS = "pdfs"
 ARQUIVO_CSV = "acervo_digital_ifce.csv"
 
 # Só baixa itens cujo "Inf. publicação" contenha um desses textos
 # (comparação sem diferenciar maiúsculas/minúsculas).
-# No site, os tipos aparecem como "TCC - Português", "TCCE (Especialização) - Português" etc.
-# Ajuste essa lista se quiser incluir/excluir algum tipo.
-TIPOS_DESEJADOS = ["TCC"]
+# Ajuste essa lista se quiser incluir/excluir algum tipo (ex: adicionar "TCC").
+TIPOS_DESEJADOS = ["Tese", "Dissertação"]
 
 BASE_URL = "https://biblioteca.ifce.edu.br/mobile"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; ColetorAcervoDigital/1.0)"
 }
 # ========================================
+
+
+def carregar_codigos_do_xml(caminho_xml):
+    """Lê o MARC XML e devolve a lista de códigos Sophia (campo 001 de
+    cada <record>), na ordem em que aparecem no arquivo, como inteiros
+    (removendo zeros à esquerda: '000109304' -> 109304, que é o formato
+    usado na URL detalhe.asp?codigo=N)."""
+    tree = ET.parse(caminho_xml)
+    root = tree.getroot()
+    codigos = []
+    for record in root.findall("record"):
+        cf = record.find("controlfield[@tag='001']")
+        if cf is not None and cf.text and cf.text.strip():
+            codigos.append(int(cf.text.strip()))
+    return codigos
 
 
 def carregar_codigos_ja_processados():
@@ -148,6 +168,17 @@ def baixar_pdf(url_pdf, codigo, session):
 
 
 def main():
+    if not os.path.exists(XML_ENTRADA):
+        print(f"Não encontrei {XML_ENTRADA}. Ajuste XML_ENTRADA lá em cima.")
+        return
+
+    codigos = carregar_codigos_do_xml(XML_ENTRADA)
+    print(f"{len(codigos)} códigos lidos do XML.")
+
+    if LIMITE_TESTE is not None:
+        codigos = codigos[:LIMITE_TESTE]
+        print(f"LIMITE_TESTE ativo: processando só os {len(codigos)} primeiros.")
+
     garantir_csv_com_cabecalho()
     ja_processados = carregar_codigos_ja_processados()
     session = requests.Session()
@@ -155,7 +186,7 @@ def main():
     with open(ARQUIVO_CSV, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
 
-        for codigo in range(CODIGO_INICIAL, CODIGO_FINAL + 1):
+        for codigo in codigos:
             if codigo in ja_processados:
                 continue
 
