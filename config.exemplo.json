@@ -1,0 +1,62 @@
+{
+  "url_base": "https://catalogo.exemplo.edu.br/",
+  "xml": null,
+  "base": null,
+  "saida": "saida",
+  "desde": null,
+  "selecao": "pendentes",
+  "pausa": 1.5,
+  "timeout": 60,
+  "tentativas": 3,
+  "tipos": {
+    "10": "Dissertação",
+    "25": "Tese"
+  },
+  "detalhar_todos": false,
+  "limite": null,
+  "ocr": false,
+  "idioma_ocr": "por",
+  "paginas_pdf": [
+    3,
+    8,
+    20
+  ],
+  "dublin_core_endpoints": [
+    "mobile/asp/ajxDublinCore.asp",
+    "asp/ajxDublinCore.asp"
+  ],
+  "lote_mb": null,
+  "lote_itens": null,
+  "saf": false,
+  "motor_saf": "python",
+  "safbuilder_jar": null,
+  "permitir_incompletos": false,
+  "refazer": false,
+  "saf_mapeamento": {
+    "titulo": "dc.title",
+    "autor": "dc.contributor.author",
+    "orientador": "dc.contributor.advisor",
+    "tipo": "dc.type",
+    "ano": "dc.date.issued",
+    "assuntos": "dc.subject",
+    "resumo": "dc.description.abstract",
+    "descricao": "dc.description",
+    "idioma": "dc.language.iso",
+    "editora": "dc.publisher",
+    "url_origem": "dc.identifier.uri"
+  },
+  "saf_obrigatorios": [
+    "titulo",
+    "autor",
+    "ano"
+  ],
+  "campos_multiplos": [
+    "autor",
+    "orientador",
+    "assuntos",
+    "descricao",
+    "idioma",
+    "editora"
+  ],
+  "separador_multiplos": "||"
+}

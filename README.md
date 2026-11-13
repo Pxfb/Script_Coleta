@@ -1,182 +1,141 @@
-# Coleta de Teses e Dissertações – Biblioteca Sophia (IFCE)
- 
-Dois scripts em Python para coletar os PDFs e extrair os metadados de Teses e Dissertações da Biblioteca Sophia do IFCE.
- 
-O fluxo tem duas etapas que rodam em sequência: primeiro baixa os PDFs, depois extrai os metadados e o resumo de cada um.
- 
+# SophiaFluxo
+
+Atualizador incremental de acervos Sophia, com coleta de PDFs, extração de metadados e geração opcional de SAF em lotes.
+
+**Três etapas independentes. Um comando. Histórico persistente.**
+
+## Instalação e primeiro uso
+
+Requer Python 3.12 e internet para instalar as dependências e consultar o catálogo. Extraia a distribuição ou clone o repositório.
+
+1. Copie `config.exemplo.json` para `config.json`.
+2. Troque `url_base` pelo endereço real do catálogo e configure `base` com seu CSV histórico, se houver.
+3. Escolha uma pasta `saida` persistente e execute, no Windows:
+
+```bat
+executar.bat --saf --lote-mb 95 --lote-itens 100
 ```
-XML MARC ──► [Etapa 0: coletar] ──► pdfs/ + acervo_digital_ifce.csv
-                                            │
-                                            ▼
-                          [Etapa 1: extrair metadados]
-                                            │
-                                            ▼
-                              metadados_completos.csv
-                                            │
-                                  (revisão manual)
+
+O comando prepara `.venv` quando necessário e executa todas as etapas. Linux/macOS:
+
+```sh
+sh executar.sh --saf --lote-mb 95 --lote-itens 100
 ```
- 
----
- 
-## Estrutura
- 
-| Arquivo | Função |
+
+Sem base histórica, todos os itens elegíveis serão candidatos na primeira execução. A URL de exemplo é fictícia. Nenhum dado do IFCE é distribuído neste repositório.
+
+## Como funciona
+
+| Arquivo | Responsabilidade |
 |---|---|
-| `coletar_sophia_ifce_lista.py` | Etapa 0 – lê os códigos do XML MARC, verifica se cada item tem PDF, filtra por tipo e baixa os PDFs |
-| `1_extrair_metadados.py` | Etapa 1 – busca os metadados Dublin Core no Sophia e extrai o resumo de cada PDF |
- 
-> Ajuste os nomes acima para os nomes reais dos seus arquivos.
- 
----
- 
-## Dependências
- 
-Obrigatórias:
- 
-```bash
-pip install requests beautifulsoup4 pdfplumber
+| `01_verificar.py` | Compara o catálogo com a base e o controle; produz a lista de pendentes. |
+| `02_coletar.py` | Lê códigos MARC 001, consulta detalhes e baixa PDFs válidos. |
+| `03_extrair.py` | Extrai Dublin Core e resumo; opcionalmente gera SAF. |
+| `executar.py` | Coordena as etapas, relatórios e controle incremental. |
+| `instalar.py` | Instala as bibliotecas de todas as etapas em `.venv`. |
+| `sophia/` | Implementação compartilhada, incluindo controle, parsers e lotes. |
+| `config.exemplo.json` | Modelo de configuração; a cópia pessoal `config.json` não vai para o Git. |
+
+Repita o mesmo comando para atualizar. O controle em `saida/controle.json` evita repetir itens concluídos. Falhas continuam pendentes; PDFs válidos e metadados concluídos são reaproveitados. Preserve toda a pasta de saída, inclusive ao mudar de máquina.
+
+O programa distingue **metadados concluídos**, **SAF gerado** e **cadastro confirmado**. Não importa arquivos no DSpace automaticamente. Após uma importação confirmada, um CSV com coluna `codigo` pode atualizar o estado:
+
+```bat
+executar.bat --confirmar-cadastro "C:\Dados\importados.csv"
 ```
- 
-Opcionais (melhoram a extração do resumo):
- 
-```bash
-pip install pymupdf                 # alternativa quando o pdfplumber "gruda" as palavras
-pip install pdf2image pytesseract   # fallback de OCR para PDFs sem camada de texto
+
+## Configuração e opções
+
+Todas as opções estão em `config.exemplo.json`. Caminhos do JSON são relativos à pasta desse JSON; caminhos da linha de comando são relativos ao terminal. Use aspas em caminhos com espaços. `tipos` relaciona os códigos de material aos nomes usados pelo catálogo.
+
+```bat
+executar.bat --help
+executar.bat --xml "C:\Dados\lista.xml" --saf
+executar.bat --base "C:\Dados\base.csv" --no-saf
+executar.bat --selecao recentes --desde 2026-11-01 --saf
+executar.bat --limite 5 --saf
 ```
- 
-O OCR também precisa de programas instalados no sistema (não basta o `pip`):
- 
-```bash
-sudo apt-get install poppler-utils                    # fornece o pdftoppm
-sudo apt-get install tesseract-ocr tesseract-ocr-por  # motor de OCR + modelo em português
+
+O padrão é buscar todos os pendentes, sem corte por data. `--xml` substitui a consulta inicial por uma lista própria, com ou sem namespace MARC. `--refazer` reprocessa a seleção; use uma lista restrita se necessário. Alterações em itens já concluídos não são descobertas automaticamente.
+
+Para executar separadamente, após instalar:
+
+```bat
+.venv\Scripts\python.exe 01_verificar.py
+.venv\Scripts\python.exe 02_coletar.py --xml "lista.xml"
+.venv\Scripts\python.exe 03_extrair.py --csv "coleta.csv" --saf
 ```
- 
-Sem o `tesseract-ocr-por`, o script cai automaticamente para o modelo em inglês, que erra mais em palavras acentuadas. Se `pdf2image`, `pytesseract` ou os programas do sistema não estiverem instalados, o OCR é pulado com um aviso e os PDFs que têm camada de texto continuam sendo processados normalmente.
- 
----
- 
-## Etapa 0 – Coletar os PDFs
- 
-**Script:** `coletar_sophia_ifce_lista.py`
- 
-### O que faz
- 
-1. Lê o arquivo MARC XML exportado do Sophia e extrai o campo de controle `001` de cada `<record>`. Esse é o mesmo código usado na URL `detalhe.asp?codigo=N` do site (zeros à esquerda são removidos).
-2. Para cada código, abre a página de detalhe e procura o link de download (`download.asp`).
-3. Filtra pelo tipo do material (campo "Inf. publicação"), mantendo só o que estiver em `TIPOS_DESEJADOS`.
-4. Baixa o PDF para `pdfs/<codigo>.pdf`, validando que o conteúdo começa com `%PDF`.
-5. Registra tudo em `acervo_digital_ifce.csv`.
-### Configuração
- 
-Edite o bloco `CONFIGURAÇÃO` no topo do script:
- 
-| Variável | Padrão | Descrição |
-|---|---|---|
-| `XML_ENTRADA` | `Arquivo Marc Teses Dissertações.xml` | Caminho do MARC XML |
-| `LIMITE_TESTE` | `None` | Processa só os N primeiros códigos (ex.: `5`). `None` = todos |
-| `SLEEP_SEGUNDOS` | `1.0` | Pausa entre requisições |
-| `PASTA_PDFS` | `pdfs` | Pasta de destino dos PDFs |
-| `ARQUIVO_CSV` | `acervo_digital_ifce.csv` | CSV de saída |
-| `TIPOS_DESEJADOS` | `["Tese", "Dissertação"]` | Tipos que serão baixados (sem diferenciar maiúsculas/minúsculas) |
- 
-### Como rodar
- 
-```bash
-python coletar_sophia_ifce_lista.py
+
+No Linux/macOS, use `.venv/bin/python`. Os caminhos dos arquivos produzidos aparecem no terminal.
+
+## SAF e lotes
+
+O motor padrão é Python. Cada item inclui PDF, `contents` e XML de metadados. O mapeamento entre colunas e campos é configurável em `saf_mapeamento`.
+
+- `--lote-mb 95`: até 95 MiB por ZIP comprimido, conferidos no arquivo final.
+- `--lote-itens 100`: até 100 itens por lote.
+- Ambos podem ser combinados; nenhum deles divide um item entre dois ZIPs.
+- Sem limites, gera um único ZIP. Um item que sozinho exceda o teto provoca erro explícito.
+- `saf/lotes.json` informa tamanhos e conteúdo dos lotes.
+
+Para usar metadados revisados sem nova consulta ao catálogo:
+
+```bat
+.venv\Scripts\python.exe 03_extrair.py --csv "metadados_revisados.csv" --somente-saf --lote-mb 95
 ```
- 
-Teste primeiro com `LIMITE_TESTE = 5`.
- 
-### Saída: `acervo_digital_ifce.csv`
- 
-Colunas: `codigo`, `titulo`, `autor`, `tipo`, `assuntos`, `arquivo_local`, `url_pdf`
- 
-- Itens **sem PDF** são registrados só com o código (demais colunas vazias).
-- Itens com PDF mas **fora do filtro** recebem `(fora do filtro)` na coluna `tipo`.
-- `autor` e `assuntos` ficam vazios aqui; são preenchidos na Etapa 1.
-### Retomável
- 
-Se o script for interrompido, é só rodar de novo: ele lê o CSV existente e pula os códigos já processados.
- 
----
- 
-## Etapa 1 – Extrair metadados completos
- 
-**Script:** `1_extrair_metadados.py`
- 
-### O que faz
- 
-Para cada item de `acervo_digital_ifce.csv` que tem PDF baixado:
- 
-1. **Metadados Dublin Core.** Visita a página de detalhe do item (para criar o contexto de sessão no servidor) e chama o endpoint `ajxDublinCore.asp`, com `Referer` apontando para essa página. Extrai título, autor(es), orientador (`contributor`), assuntos, tipo, ano e descrição. O script tenta duas variantes de URL do endpoint (`/mobile/asp/...` e `/asp/...`) e guarda em cache a que funcionou.
-2. **Campus e ano.** O campus é extraído da descrição (ex.: `IFCE/ Campus Fortaleza, Fortaleza-CE, 2019` → `Fortaleza`). O ano usa o campo `date` e, se ele estiver vazio, cai para o ano encontrado na descrição.
-3. **Resumo.** Lê o texto das primeiras páginas do PDF e procura o resumo, ampliando a busca em etapas (3 → 8 → 20 páginas).
-4. **Fallbacks de título e tipo.** Se o Dublin Core não trouxer esses campos, reaproveita os valores do CSV da Etapa 0.
-### Como o parser lê o Dublin Core
- 
-O Sophia devolve os metadados como uma **string JavaScript** (`var str_final = "<table>...</table>";`) dentro de um `<script>`, e não como HTML "de verdade". Por isso o parser primeiro extrai e desfaz o escaping dessa string e só então lê as linhas `<tr><td>`. Se esse formato não for reconhecido, ele tenta, nesta ordem: tags `<meta name="DC.*">`, tabela HTML, lista `<dl>/<dt>/<dd>` e texto solto. Os rótulos em português e em inglês são normalizados por um dicionário de sinônimos (`MAPA_LABELS`).
- 
-### Como o resumo é extraído
- 
-- **Extração de texto em cascata:** `pdfplumber` → `pdfplumber` com `x_tolerance=1` → PyMuPDF (`fitz`). A escolha se baseia na proporção de espaços no texto (`LIMIAR_RAZAO_ESPACOS = 0.08`); proporção baixa indica palavras coladas.
-- **OCR como último recurso:** se o PDF não tiver camada de texto (menos de `LIMIAR_CHARS_OCR = 30` caracteres), as páginas são renderizadas como imagem e passam pelo Tesseract (primeiro em português, depois em inglês).
-- **Localização do resumo:** junta palavras hifenizadas, encontra todas as ocorrências de "RESUMO" (inclusive `R E S U M O`), descarta entradas de sumário (rótulo seguido de número de página), corta no próximo cabeçalho conhecido (ABSTRACT, PALAVRAS-CHAVE, SUMÁRIO, INTRODUÇÃO etc.) e escolhe o candidato mais longo.
-- Resumos com menos de 80 caracteres são descartados (quase sempre ruído), e o resultado é limitado a 2500 caracteres.
-### Configuração
- 
-| Variável | Padrão | Descrição |
-|---|---|---|
-| `CSV_ENTRADA` | `acervo_digital_ifce.csv` | CSV gerado na Etapa 0 |
-| `CSV_SAIDA` | `metadados_completos.csv` | CSV de saída |
-| `SLEEP_SEGUNDOS` | `1.0` | Pausa entre itens |
-| `PASTA_DEBUG` / `MAX_DEBUG_SALVOS` | `debug_dublin_core` / `5` | HTML cru salvo quando nenhum campo é reconhecido |
-| `PASTA_DEBUG_RESUMO` / `MAX_DEBUG_RESUMO_SALVOS` | `debug_resumo` / `8` | Texto do PDF salvo quando o resumo não é encontrado |
- 
-### Como rodar
- 
-```bash
-python 1_extrair_metadados.py
+
+O CSV precisa de `codigo`, `arquivo_local` e das colunas mapeadas. Caminhos dos PDFs são relativos ao CSV ou absolutos. Valores múltiplos usam `||` por padrão. Campos obrigatórios padrão: título, autor e ano. O repositório de destino pode exigir outros campos.
+
+O motor Java é opcional: configure `safbuilder_jar` com um JAR obtido separadamente, instale Java e use `--motor-saf java`. O código Java não é redistribuído nesta edição pública. O gerador Python não depende dele.
+
+## OCR, relatórios e falhas
+
+`instalar.bat --ocr` prepara o Tesseract nos sistemas suportados; `--ocr` habilita seu uso. A instalação de programas do sistema pode exigir privilégios. OCR não precisa de Poppler. O idioma configurado deve estar instalado.
+
+Cada execução produz `relatorio.html`, JSON e log. Código `0`: concluído/sem novidades; `1`: falha; `2`: resultado parcial/revisão; `130`: interrupção. `--permitir-incompletos` permite continuar com itens elegíveis; não admite PDF inválido ou título vazio.
+
+Não há perguntas intermediárias na coleta. Há bloqueio contra execuções concorrentes na mesma saída. Não apague um bloqueio enquanto outro processo estiver ativo.
+
+## Limites conhecidos
+
+- Compatível com a estrutura Sophia dos scripts de origem; outros layouts podem exigir adaptação.
+- Baixa o primeiro link digital do item; múltiplos links geram aviso.
+- Extração automática não substitui revisão catalográfica.
+- SAF gerado não comprova cadastro no destino.
+- O núcleo Python foi validado em Linux; o workflow foi preparado para validar os três sistemas quando executado no GitHub. O motor Java e a importação DSpace não foram testados nesta entrega.
+
+## Desenvolvimento e publicação
+
+A suíte pública usa dados sintéticos e HTTP local, sem depender de um catálogo externo:
+
+```sh
+python -m unittest discover -s tests -v
 ```
- 
-O script depende do CSV e da pasta `pdfs/` da Etapa 0, no mesmo diretório. Vale testar com poucos itens antes (por exemplo, usando `LIMITE_TESTE` na Etapa 0).
- 
-### Saída: `metadados_completos.csv`
- 
-Colunas: `codigo`, `titulo`, `autor`, `orientador`, `campus`, `tipo`, `ano`, `assuntos`, `resumo`, `resumo_via_ocr`, `arquivo_local`
- 
-- Campos com vários valores (autores, orientadores, assuntos) são separados por `; `.
-- `resumo_via_ocr` recebe `sim` quando o resumo veio de OCR, o que aumenta a chance de erros de acentuação ou palavras trocadas.
-### Pastas de debug
- 
-- `debug_dublin_core/`: respostas do endpoint sem campos reconhecidos (só as primeiras). Servem para ajustar o parser ao formato real.
-- `debug_resumo/`: texto extraído dos PDFs em que nenhum resumo foi encontrado.
----
- 
-## Revisão manual (passo obrigatório)
- 
-Depois que a Etapa 1 terminar, abra `metadados_completos.csv` no Excel ou LibreOffice Calc e revise principalmente:
- 
-- `orientador`
-- `campus`
-- `resumo`, com atenção redobrada às linhas com `resumo_via_ocr = sim`
-Corrija o que estiver vazio ou com lixo. Nem toda fonte é 100% padronizada, então isso é esperado.
- 
----
- 
-## Uso responsável
- 
-- As pausas entre requisições (`SLEEP_SEGUNDOS`) existem para não sobrecarregar o servidor da biblioteca. Evite removê-las.
-- Os scripts acessam apenas PDFs de acesso público, o equivalente a navegar e baixar manualmente, mas de forma automatizada. Respeite os termos de uso da biblioteca.
----
- 
-## Solução de problemas
- 
-| Sintoma | Provável causa / o que fazer |
-|---|---|
-| `Não encontrei <arquivo>.xml` | Ajuste `XML_ENTRADA` na Etapa 0 |
-| Campos do Dublin Core vazios | Veja os arquivos em `debug_dublin_core/` e ajuste o parser |
-| Resumo vazio | Veja os arquivos em `debug_resumo/`; o resumo pode estar além da página 20 ou fora do padrão |
-| Aviso "OCR indisponível" | Instale `pdf2image`/`pytesseract` e os programas `poppler-utils` e `tesseract-ocr` |
-| Acentos errados no OCR | Instale `tesseract-ocr-por` |
-| Interrompeu no meio da Etapa 0 | Rode de novo; ele retoma de onde parou |
-| Interrompeu no meio da Etapa 1 | O CSV de saída é reescrito a cada execução, então rode de novo do início |
+
+Use o Python de `.venv` após instalar. A suíte pública tem 47 testes; duas verificações dependentes das capturas institucionais foram retiradas da distribuição pública.
+
+- [Publicar e distribuir](docs/PUBLICAR.md)
+- [Próximas funcionalidades](docs/ROADMAP.md)
+- [Contribuir](CONTRIBUTING.md)
+- [Autoria e licença](AVISOS_DE_AUTORIA.md)
+
+Não há licença open source atribuída automaticamente. O responsável deve definir a licença e registrar os créditos antes de anunciar o projeto como open source.
+
+
+### Itens sem link para PDF
+
+Quando a coleta reconhece a página do item, mas não encontra o link de download esperado no Sophia, ela guarda o estado `sem_pdf` em `saida/coleta/`. Nas próximas execuções com a mesma saída, esses registros ficam fora da fila antes de aplicar `--limite`. A busca geral ainda pode listá-los no catálogo. Os relatórios mostram quantos itens foram ignorados por esse motivo. Registros `sem_pdf` de versões anteriores são reaproveitados.
+
+Falhas de rede, páginas de detalhe não reconhecidas e PDFs inválidos continuam pendentes. Se um PDF for disponibilizado depois ou se mudar o formato dos links do catálogo, rode `executar.bat --xml "lista.xml" --refazer --saf` com uma lista MARC restrita aos códigos que deseja rever. Use a mesma pasta de saída.
+
+## Interface gráfica renovada
+
+Abra abrir_interface.bat no Windows. Use Configurar projeto para escolher a URL do catálogo, o CSV de base e a pasta persistente de saída. A edição pública cria config.json a partir do modelo ao salvar pela primeira vez.
+
+Os cartões contam registros da lista carregada, ausentes da base, itens ainda a processar para SAF e casos já registrados sem PDF. Esses números não comprovam que cada candidato tem PDF. A coleta faz essa validação. Um registro pode estar ausente da base e já ter SAF gerado no histórico.
+
+Há pesquisa por código, título ou situação, ordenação crescente pelos cabeçalhos, detalhes por duplo clique, barra de atividade, acesso ao relatório e recuperação dos ZIPs anteriores. A data inicial se aplica à aba Novas aquisições. Acervo geral consulta os ausentes da base, com o mesmo controle incremental.
+
+A identidade do aplicativo fica em assets/marca.json. Altere nome e o nome do arquivo de logo para adaptar a instituição. Coloque a imagem em assets. A edição de pesquisa inclui as mesmas funções, sem os dados e a marca do IFCE.
+
+A validação automatizada cobre as contagens e a ordenação, além do núcleo de processamento. O teste visual foi bloqueado por falta de foco no ambiente gráfico disponível. As janelas e a instalação devem ser verificadas em Windows.

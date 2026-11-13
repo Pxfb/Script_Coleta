@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.py[cod]
+config.json
+saida*/
+dados_ocr/
+*.log
+*.pdf
+*.zip
+*.part
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+terceiros/
+dist/
