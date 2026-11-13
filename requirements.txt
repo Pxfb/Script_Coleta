@@ -1,0 +1,6 @@
+requests==2.34.2
+beautifulsoup4==4.15.0
+pdfplumber==0.11.9
+PyMuPDF==1.26.6
+pytesseract==0.3.13
+Pillow==13.0.0
